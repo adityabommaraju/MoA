@@ -32,6 +32,10 @@ To get to get started with using MoA in your own apps, see `moa.py`. In this sim
 2. Get your [Together API Key](https://api.together.xyz/settings/api-keys) & export it: `export TOGETHER_API_KEY=`
 3. Run the python file: `python moa.py`
 
+**Current Model Architecture:**
+- Reference Models: Llama 3.3 70B, Qwen 2.5 72B, Llama 3.1 70B, Llama 3.1 8B (all Turbo variants)
+- Aggregator Model: Qwen 2.5 72B Instruct Turbo
+
 <img alt="MoA explained" src="./assets/moa-explained.png">
 
 ## Multi-layer MoA Example
@@ -104,6 +108,12 @@ To run AlpacaEval 2, execute the following scripts:
 bash run_eval_alpaca_eval.sh
 ```
 
+**Performance Optimizations:**
+- Async parallelization of reference model API calls using `asyncio.gather()`
+- Rate limiting with semaphore (10 concurrent requests for 590 RPM)
+- Multi-process execution with 12 workers
+- Reduces generation time from ~7.8 hours to ~20 minutes (96% improvement)
+
 ### Run MT-Bench
 
 For a minimal example of MT-Bench evaluation, run:
@@ -128,6 +138,24 @@ bash run_eval_flask.sh
 </div>
 
 We achieved top positions on both the AlpacaEval 2.0 leaderboard and MT-Bench. Notably, on AlpacaEval 2.0, using solely open-source models, we achieved a margin of 7.6% absolute improvement from 57.5% (GPT-4 Omni) to 65.1% (MoA).
+
+#### Latest Results with Updated Architecture
+
+Using the optimized model architecture with latest Turbo variants:
+
+**Model Configuration:**
+- **Reference Models**: Llama 3.3 70B Instruct Turbo, Qwen 2.5 72B Instruct Turbo, Llama 3.1 70B Instruct Turbo, Llama 3.1 8B Instruct Turbo
+- **Aggregator Model**: Qwen 2.5 72B Instruct Turbo
+- **Evaluation**: AlpacaEval with GPT-4o-mini as judge
+
+**Performance Metrics:**
+- **Win Rate**: 88.45%
+- **Discrete Win Rate**: 89.07%
+- **Length-Controlled Win Rate**: 75.00%
+- **Total Examples**: 805 (716 wins, 87 losses, 2 draws)
+- **Average Response Length**: 3,206 characters
+
+This demonstrates strong performance using only open-source models with the MoA architecture, achieving nearly 9 out of 10 wins against the baseline.
 
 <div align="center">
   <img src="assets/flask.png" alt="flask" style="width: 50%; display: block; margin-left: auto; margin-right: auto;" />

@@ -4,13 +4,68 @@ from fire import Fire
 from functools import partial
 from typing import List
 from loguru import logger
+import asyncio
 
 from utils import (
     generate_together,
     generate_openai,
     generate_with_references,
+    generate_with_references_async,
     DEBUG,
 )
+
+
+async def process_fn_async(
+    item,
+    model,
+    reference_models=[],
+    temperature=0.7,
+    max_tokens=2048,
+    rounds=1,
+):
+    """Async version that parallelizes reference model calls."""
+    messages = [{"role": "user", "content": item["instruction"]}]
+    references = item.get("references", [])
+
+    if len(references) == 0 and len(reference_models) > 0:
+        prev_references = []
+
+        for i_round in range(rounds):
+            if DEBUG:
+                logger.info(
+                    f"Round {i_round+1}/{rounds} to collecting reference responses."
+                )
+
+            # KEY CHANGE: Parallelize reference model calls using asyncio.gather
+            tasks = [
+                generate_with_references_async(
+                    model=reference_model,
+                    messages=messages,
+                    references=prev_references,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                )
+                for reference_model in reference_models
+            ]
+
+            # Wait for all reference models to complete in parallel
+            reference_results = await asyncio.gather(*tasks)
+
+            # Filter out None results
+            references = [ref for ref in reference_results if ref is not None]
+
+            if i_round < rounds - 1:
+                prev_references = references
+                references = []
+
+    # Generate final output with aggregator model
+    output = await generate_with_references_async(
+        model=model,
+        messages=messages,
+        references=references,
+    )
+
+    return {"output": output, "generator": model + "-together"}
 
 
 def process_fn(
@@ -21,51 +76,18 @@ def process_fn(
     max_tokens=2048,
     rounds=1,
 ):
-
-    messages = [{"role": "user", "content": item["instruction"]}]
-
-    references = item.get("references", [])
-
-    if len(references) == 0 and len(reference_models) > 0:
-
-        prev_references = []
-
-        for i_round in range(rounds):
-
-            if DEBUG:
-                logger.info(
-                    f"Round {i_round+1}/{rounds} to collecting reference responses."
-                )
-
-            references = []
-
-            for reference_model in reference_models:
-
-                reference = generate_with_references(
-                    model=reference_model,
-                    messages=messages,
-                    references=prev_references,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                )
-
-                if reference is not None:
-
-                    references.append(reference)
-
-            if i_round < rounds - 1:
-
-                prev_references = references
-
-                references = []
-
-    output = generate_with_references(
-        model=model,
-        messages=messages,
-        references=references,
+    """Synchronous wrapper that calls async version."""
+    # Run the async function in a new event loop
+    return asyncio.run(
+        process_fn_async(
+            item=item,
+            model=model,
+            reference_models=reference_models,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            rounds=rounds,
+        )
     )
-
-    return {"output": output, "generator": model + "-together"}
 
 
 def main(

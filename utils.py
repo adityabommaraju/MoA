@@ -4,11 +4,15 @@ import time
 import requests
 import openai
 import copy
+import asyncio
 
 from loguru import logger
 
 
 DEBUG = int(os.environ.get("DEBUG", "0"))
+
+# Global rate limiter: Allow max 10 concurrent requests (590 RPM ≈ 10/sec)
+_rate_limit_semaphore = asyncio.Semaphore(10)
 
 
 def generate_together(
@@ -72,6 +76,70 @@ def generate_together(
         logger.debug(f"Output: `{output[:20]}...`.")
 
     return output
+
+
+async def generate_together_async(
+    model,
+    messages,
+    max_tokens=2048,
+    temperature=0.7,
+    streaming=False,
+):
+    """Async version of generate_together using aiohttp."""
+    import aiohttp
+
+    async with _rate_limit_semaphore:
+        output = None
+        endpoint = "https://api.together.xyz/v1/chat/completions"
+
+        for sleep_time in [1, 2, 4, 8, 16, 32]:
+            try:
+                if DEBUG:
+                    logger.debug(
+                        f"Sending messages ({len(messages)}) (last message: `{messages[-1]['content'][:20]}...`) to `{model}`."
+                    )
+
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(
+                        endpoint,
+                        json={
+                            "model": model,
+                            "max_tokens": max_tokens,
+                            "temperature": (temperature if temperature > 1e-4 else 0),
+                            "messages": messages,
+                        },
+                        headers={
+                            "Authorization": f"Bearer {os.environ.get('TOGETHER_API_KEY')}",
+                        },
+                        timeout=aiohttp.ClientTimeout(total=120)
+                    ) as res:
+                        response_json = await res.json()
+
+                        if "error" in response_json:
+                            logger.error(response_json)
+                            if response_json["error"]["type"] == "invalid_request_error":
+                                logger.info("Input + output is longer than max_position_id.")
+                                return None
+
+                        output = response_json["choices"][0]["message"]["content"]
+                        break
+
+            except Exception as e:
+                logger.error(e)
+                if DEBUG:
+                    logger.debug(f"Msgs: `{messages}`")
+                logger.info(f"Retry in {sleep_time}s..")
+                await asyncio.sleep(sleep_time)
+
+        if output is None:
+            return output
+
+        output = output.strip()
+
+        if DEBUG:
+            logger.debug(f"Output: `{output[:20]}...`.")
+
+        return output
 
 
 def generate_together_stream(
@@ -174,6 +242,25 @@ def generate_with_references(
         messages = inject_references_to_messages(messages, references)
 
     return generate_fn(
+        model=model,
+        messages=messages,
+        temperature=temperature,
+        max_tokens=max_tokens,
+    )
+
+
+async def generate_with_references_async(
+    model,
+    messages,
+    references=[],
+    max_tokens=2048,
+    temperature=0.7,
+):
+    """Async version of generate_with_references."""
+    if len(references) > 0:
+        messages = inject_references_to_messages(messages, references)
+
+    return await generate_together_async(
         model=model,
         messages=messages,
         temperature=temperature,
